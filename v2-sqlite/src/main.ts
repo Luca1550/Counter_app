@@ -1,31 +1,21 @@
 import { app, BrowserWindow, ipcMain } from 'electron';
 import path from 'path';
-import fs from 'fs';
+import Database from 'better-sqlite3';
 
-// ─── Persistance JSON ──────────────────────────────────────────
-// Le compteur est sauvegardé dans un fichier counter.json
-// à la racine du projet.
-// __dirname = dossier dist/ (là où main.js est compilé)
-// '..' remonte à la racine du projet
+// new Database(chemin) ouvre le fichier .db
+// Si le fichier n'existe pas, il est créé automatiquement
+const DB_PATH = path.join(__dirname, '..', 'counter.db');
+const db = new Database(DB_PATH);
 
-const DATA_FILE = path.join(__dirname, '..', 'counter.json');
-
-// Lit la valeur depuis le fichier JSON.
-// Si le fichier n'existe pas encore, retourne 0 (premier lancement).
-function readCounter(): number {
-    if (!fs.existsSync(DATA_FILE)) {
-        return 0;
-    }
-    const data = JSON.parse(fs.readFileSync(DATA_FILE, 'utf-8'));
-    return data.value ?? 0;
-}
-
-// Écrit la valeur dans le fichier JSON.
-function writeCounter(value: number): void {
-    fs.writeFileSync(DATA_FILE, JSON.stringify({ value }), 'utf-8');
-}
-
-// ─── Fenêtre ───────────────────────────────────────────────────
+// Exécuté à chaque démarrage
+db.exec(`
+CREATE TABLE IF NOT EXISTS Counter (
+id INTEGER PRIMARY KEY,
+value INTEGER NOT NULL DEFAULT 0
+)
+`);
+// OR IGNORE : si id=1 existe déjà, ne fait rien (conserve la valeur)
+db.prepare('INSERT OR IGNORE INTO Counter (id, value) VALUES (1, 0)').run();
 
 function createWindow(): void {
     const win = new BrowserWindow({
@@ -36,38 +26,48 @@ function createWindow(): void {
             contextIsolation: true,
         },
     });
-
-    win.loadFile(
-        path.join(__dirname, '..', 'renderer/app/dist/app/browser/index.html')
+    win.loadFile(path.join(__dirname, '..', 'renderer/app/dist/app/browser/index.html')
     );
 }
 
 app.whenReady().then(() => {
     createWindow();
 });
-
-// ─── IPC ───────────────────────────────────────────────────────
-// Chaque handler reçoit un message du Renderer (via preload),
-// effectue l'opération sur le compteur, persiste dans le JSON,
-// et retourne la nouvelle valeur.
+// Fermer la connexion proprement à la fermeture de l'app
+app.on('before-quit', () => {
+    db.close();
+});
 
 ipcMain.handle('get-counter', (): number => {
-    return readCounter();
-});
-
+        // get() → retourne un objet { value: number } ou undefined
+        // Le cast 'as { value: number }' est nécessaire car TypeScript
+        // ne peut pas inférer la forme du résultat SQL automatiquement
+        const row = db.prepare('SELECT value FROM Counter WHERE id = 1').get() as {
+            value:
+            number
+        };
+        return row.value;
+    });
 ipcMain.handle('increment', (): number => {
-    const value = readCounter() + 1;
-    writeCounter(value);
-    return value;
-});
-
+        // run() exécute l'UPDATE — pas de valeur de retour utile
+        db.prepare('UPDATE Counter SET value = value + 1 WHERE id = 1').run();
+        // get() relit la valeur après modification
+        const row = db.prepare('SELECT value FROM Counter WHERE id = 1').get() as {
+            value:
+            number
+        };
+        return row.value;
+    });
 ipcMain.handle('decrement', (): number => {
-    const value = readCounter() - 1;
-    writeCounter(value);
-    return value;
-});
-
+        db.prepare('UPDATE Counter SET value = value - 1 WHERE id = 1').run();
+        const row = db.prepare('SELECT value FROM Counter WHERE id = 1').get() as {
+            value:
+            number
+        };
+        return row.value;
+    });
 ipcMain.handle('reset', (): number => {
-    writeCounter(0);
-    return 0;
-});
+        db.prepare('UPDATE Counter SET value = 0 WHERE id = 1').run();
+        return 0;
+    });
+
