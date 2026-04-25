@@ -1,0 +1,12 @@
+// prisma/schema.prisma
+generator client {
+  provider = "prisma-client-ts"
+  output = "../src/prisma/generated"
+}
+datasource db {
+  provider = "sqlite"
+}
+model Counter {
+  id Int @id @default(1)
+  value Int @default(0)
+}
